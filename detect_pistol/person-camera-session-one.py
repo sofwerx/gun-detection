@@ -39,45 +39,17 @@ warnings.filterwarnings('ignore')
 #######################################################################
 ################ Initialize Functions/Variables #######################
 #######################################################################
-# Global Variables
-
-# Camera
-RECEPTION_EAST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20043"
-RECEPTION_WEST = "rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20044"
-DIRTYWERX_NORTH="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20045"
-DIRTYWERX_SOUTH="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20046"
-THUNDERDRONE_INDOOR_EAST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20047"
-THUNDERDRONE_INDOOR_WEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20048"
-OUTSIDE_WEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20049"
-OUTSIDE_NORTH_WEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20050"
-OUTSIDE_NORTH="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20051"
-OUTSIDE_NORTH_EAST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20052"
-DIRTYWERX_RAMP="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20053"
-TEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20043" #!!!
-
-
-# Setup ES 
-try:
-    es = Elasticsearch(
-        [
-            'https://elastic:diatonouscoggedkittlepins@elasticsearch.orange.opswerx.org:443'
-        ],
-        verify_certs=True
-    )
-    print("ES - Connected.")
-except Exception as ex:
-    print("Error: ", ex)
-
-
-# GPU Percentage
-#gpuAmount = int((sys.argv)[2]) * 0.1 #!!!
-
 
 # Camera Selection
-url = globals()[str((sys.argv)[1])] #!!!
-#url=TEST
+url = sys.argv[1]
 print(url)
+urlname = url[-5:]
+print(urlname)
 
+#Takes bash input for Minio Client credentials
+client = sys.argv[2]
+access = sys.argv[3]
+secret = sys.argv[4]
 
 # Science Thresholds
 person_threshold = 0.50
@@ -87,13 +59,13 @@ person_gun_threshold = 0.60
 # Intialize Tensorflow session and gpu memory management
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
-#config.gpu_options.per_process_gpu_memory_fraction = gpuAmount #!!!
+#config.gpu_options.per_process_gpu_memory_fraction = gpuAmount
 session = tf.Session(config=config)
 
 os.chdir("/tensorflow/models/research/object_detection/") #!!!
 
 # Get Video and dimensions
-cap = cv2.VideoCapture(url) #!!!
+cap = cv2.VideoCapture(url)
 print(cap)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -174,10 +146,21 @@ def load_image_into_numpy_array(image):
     return np.array(image.getdata()).reshape(
         (im_height, im_width, 3)).astype(np.uint8)
 
-minioClient = Minio('minio.supermicro3.opswerx.org',
-                  access_key='admin',
-                  secret_key='Doolittle123',
+#connects to the Minio Client
+minioClient = Minio(client,
+                  access_key=access,
+                  secret_key=secret,
                   secure=True)
+
+#makes Minio bucket or checks if bucket exists
+try: 
+    minioClient.make_bucket("person-camera-session", location="us-east-1")
+except BucketAlreadyOwnedByYou as err:
+    pass
+except BucketAlreadyExists as err:
+    pass
+except ResponseError as err:
+    raise
 
 #######################################################################
 ############# Perform object Detection and Recognition ################
@@ -318,9 +301,9 @@ with tf.Session(graph=detection_graph) as sess:
         df7.columns = ['wid', 'hei', 'px', 'py']
         
         #store current frame and data about frame in a directory (directory location determined by line 212)
-        name = "rec_frame"+str(nameCount)+".jpg"
+        name = "rec_frame"+urlname+"_"+str(nameCount)+".jpg"
         
-        cv2.imwrite(os.path.join(path,name), image_np, [int(cv2.IMWRITE_JPEG_QUALITY), 10]) #lowers image resolution and saves image
+        cv2.imwrite(os.path.join(path,name), image_np) #lowers image resolution and saves image
         nameCount+=1
         csvfile = name.replace(".jpg", ".csv")
         df7.to_csv(csvfile)
@@ -329,6 +312,7 @@ with tf.Session(graph=detection_graph) as sess:
         try:
             minioClient.fput_object('person-camera', name, name)
             minioClient.fput_object('person-camera', csvfile, csvfile)
+            print("Sent to Minio server")
         except ResponseError as err:
             print(err)
         
@@ -338,5 +322,3 @@ with tf.Session(graph=detection_graph) as sess:
         
         print('Took {} seconds to reach end of session'.format(timeit.default_timer() - start_time))
 sess.close()
-print('Took {} seconds to find people in image'.format(timeit.default_timer() - start_time))
-

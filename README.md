@@ -1,4 +1,12 @@
-# pistol-detection
+# Gun Detection Using Tensorflow
+Utilizing Tensorflow and multiple trained models, these Python-based scripts can access a video feed and detect either pistols (handguns, pistols, etc.) or "long guns" (rifles, etc.). To acheive this, two Tensorflow sessions are ran seperately. The first session detects people and the second session detects guns within the images of detected persons. This method reduces the number of false positives while also maintainig optimal performance times that allow the sessions to be ran with any real-time video feed. The two sessions are diesgined to be ran concurrently with each other.
+
+## Prerequisites
+A Minio server and bucket is required to store certain data. The public Minio server 'play.minio.io:9000' can be used with the access_key 'Q3AM3UQ867SPQQA43P2F' and secret_key 'zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG'. More information about Minio Client can be found here: https://docs.minio.io/docs/minio-client-complete-guide.
+
+## Installation
+### Docker
+It is recommened that these scripts are ran within a docker container. The following commands should be ran to set up the container:
 
 ```
 git clone https://github.com/sofwerx/assault-rifle-detection.git $HOME/Documents/pistol-detection
@@ -23,16 +31,16 @@ nvidia-docker run --rm --network host --privileged -it -v ~/.Xauthority:/root/.X
 cd object_detection
 ```
 
-For optimization, the object detection code has been split into two seperate scripts that can be run simulatenously, but should be run in seperate instances. Depending on which instance one is running, do the following:
+For optimization, the object detection code has been split into two seperate scripts that can be run simulatenously, but should be run in seperate instances (on seperate machines). Depending on which instance will be running (which on you want to run), run the following commands:
 
 ```
 cp /detect_pistol/person-camera-session-one.py .
 ```
-or
+OR
 ```
 cp /detect_pistol/person-camera-session-two.py .
 ```
-then, for both:
+then, after either command:
 ```
 wget http://download.tensorflow.org/models/object_detection/faster_rcnn_resnet101_coco_2017_11_08.tar.gz
 ```
@@ -41,32 +49,44 @@ wget http://download.tensorflow.org/models/object_detection/faster_rcnn_resnet10
 tar -xvf faster_rcnn_resnet101_coco_2017_11_08.tar.gz
 ```
 
-Select Camera
 
-RECEPTION_EAST
-RECEPTION_WEST
-DIRTYWERX_NORTH
-DIRTYWERX_SOUTH
-THUNDERDRONE_INDOOR_EAST
-THUNDERDRONE_INDOOR_WEST
-OUTSIDE_WEST
-OUTSIDE_NORTH_WEST
-OUTSIDE_NORTH
-OUTSIDE_NORTH_EAST
-DIRTYWERX_RAMP
+The following commands will require one to enter with the bash command which gun type will be detected. The current options are as follows: 
 
-Select Gun Type
+----------------------------------------------------------------------------------------------------------------------------------------
+
+Select Gun Type:
+
 PISTOL
+
 LONGGUN
 
+BOTH
 
-Run session one in its own instance, selecting which camera to use
+----------------------------------------------------------------------------------------------------------------------------------------
+
+The following commands also require one to input the absolute path or rtsp link of the camera they'd wish to use, the name of their Minio Client, Minio access key, and Minio secret key.
+
+Run session one in its own instance (before session two). (It's not entirely neccesary to run session one before session two on subsequent runs, but it should be done if one wants to use a live video feed and track objects in real time.)
+
 ```
-python person-camera-session-one.py RECEPTION_EAST
+python person-camera-session-one.py <absolute path to video feed or rtsp link here> <Minio Client> <Minio access key> <Minio secret key>
 ```
 
 Session two can be ran simultaneously with session one in a seperate instance.
-Choose which camera is being used and what object is being detected.
+Choose what gun type is being detected.
+
 ```
-python person-camera-session-two.py RECEPTION_EAST PISTOL
+python person-camera-session-two.py <Gun type> <absolute path to video feed or rtsp link here> <Minio Client> <Minio access key> <Minio secret key>
 ```
+Here's an example of running the scripts:
+
+```
+python person-camera-session-one.py rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov play.minio.io:9000 Q3AM3UQ867SPQQA43P2F zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG
+```
+
+```
+python person-camera-session-two.py PISTOL rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov play.minio.io:9000 Q3AM3UQ867SPQQA43P2F zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG
+```
+
+## Known Issues
+There may be a few issues with this project. Detailed descriptions of known issues can be found in the "Issues" tab on this Github repo

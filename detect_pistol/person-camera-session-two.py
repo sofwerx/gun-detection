@@ -39,62 +39,42 @@ warnings.filterwarnings('ignore')
 #######################################################################
 ################ Initialize Functions/Variables #######################
 #######################################################################
-# Global Variables
-
-# Camera
-RECEPTION_EAST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20043"
-RECEPTION_WEST = "rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20044"
-DIRTYWERX_NORTH="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20045"
-DIRTYWERX_SOUTH="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20046"
-THUNDERDRONE_INDOOR_EAST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20047"
-THUNDERDRONE_INDOOR_WEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20048"
-OUTSIDE_WEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20049"
-OUTSIDE_NORTH_WEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20050"
-OUTSIDE_NORTH="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20051"
-OUTSIDE_NORTH_EAST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20052"
-DIRTYWERX_RAMP="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20053"
-TEST="rtsp://admin:1qazxsw2!QAZXSW@@datascience.opswerx.org:20043" #!!!
 
 #Gun type to detect
-PISTOL = False
-LONGGUN = True
-
-# Setup ES 
-try:
-    es = Elasticsearch(
-        [
-            'https://elastic:diatonouscoggedkittlepins@elasticsearch.orange.opswerx.org:443'
-        ],
-        verify_certs=True
-    )
-    print("ES - Connected.")
-except Exception as ex:
-    print("Error: ", ex)
-
+PISTOL = "pistol"
+LONGGUN = "longgun"
+BOTH = "both"
 
 # Gun Type selection
-gun = globals()[str((sys.argv[2])] #!!!
+gun = globals()[str((sys.argv)[1])]
 
+#camera selection
+url = sys.argv[2]
+urlname = camera[-5:]
 
-# Camera Selection
-url = globals()[str((sys.argv)[1])] #!!!
+client = sys.argv[3]
+access = sys.argv[4]
+secret = sys.argv[5]
 
 # Science Thresholds
 person_threshold = 0.50
 person_gun_threshold = 0.60
 
 # paths to model and labels
-if(gun):
-    model = '/tf_files/retrained_graph_long_gun.pb'
-    labels = "/tf_files/retrained_labels_long_gun.txt"
+if(gun=="longgun"):
+    model = '/tf_files/retrained_graph_long_gun.pb' #!!!
+    labels = "/tf_files/retrained_labels_long_gun.txt" #!!!
+elif(gun=="both"):
+    model = '/tf_files/frozen_inference_graph.pb'
+    labels = "/tf_files/frozen_inference_graph.txt"
 else:
-    model = '/tf_files/retrained_graph.pb'
-    labels = "/tf_files/retrained_labels.txt"
+    model = '/tf_files/retrained_graph.pb' #!!!
+    labels = "/tf_files/retrained_labels.txt" #!!!
 
 # Intialize Tensorflow session and gpu memory management
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
-#config.gpu_options.per_process_gpu_memory_fraction = gpuAmount #!!!
+#config.gpu_options.per_process_gpu_memory_fraction = gpuAmount
 session = tf.Session(config=config)
 
 # This is needed since the notebook is stored in the object_detection folder.
@@ -107,7 +87,7 @@ os.chdir("/tensorflow/models/research/object_detection/") #!!!
 
 # Needed if you want to make bounded boxes around person for object detection
 from utils import label_map_util
-from utils import visualization_utils as vis_util
+#from utils import visualization_utils as vis_util
 
 ##################### Model Preparation ###############################
 
@@ -172,10 +152,19 @@ def load_image_into_numpy_array(image):
     return np.array(image.getdata()).reshape(
         (im_height, im_width, 3)).astype(np.uint8)
 
-minioClient = Minio('minio.supermicro3.opswerx.org',
-                  access_key='admin',
-                  secret_key='Doolittle123',
+minioClient = Minio(client,
+                  access_key=access,
+                  secret_key=secret,
                   secure=True)
+
+try: 
+    minioClient.make_bucket("test", location="us-east-1")
+except BucketAlreadyOwnedByYou as err:
+    pass
+except BucketAlreadyExists as err:
+    pass
+except ResponseError as err:
+    raise
 
 count = 0
 person_count = 0
@@ -183,19 +172,34 @@ location = '/pistol-detection/detect_pistol/Data' #!!!
 os.chdir(location)
 with tf.Session() as sess2:
     while(True):
-        image = 'rec_frame'+str(count)+'.jpg'
-        csv = 'rec_frame'+str(count)+'.csv'
+        image = 'rec_frame'+urlname+'_'+str(count)+'.jpg'
+        csv = 'rec_frame'+urlname+'_'+str(count)+'.csv'
         try:
-            minioClient.fget_object('person-camera', image, image)
-            minioClient.fget_object('person-camera', csv, csv)
+            minioClient.fget_object('test', image, image)
+            minioClient.fget_object('test', csv, csv)
         except NoSuchKey as err:
+            #Note: Session 2 may go through files on the Minio server faster than Session 1 can produce files
+            #This error may appear frequently if Session 2 can't find a file Session 1 hadn't produced yet
+            #Session 2 will wait for Session 1 to make the next file.
             print(err) #comment this out if you don't want constant error messages
+            print("NoSuchKey error. Tried to find a non-existent file in the Minio Client") #Comment this one out too
             continue
         except ResponseError as err:
             print(err)
             continue
         image_np = cv2.imread(image)
         df8 = pd.read_csv(csv)
+        
+        #If the Minio Client bucket gets too full of images, use the following code to delete files.
+        #We choose to not delete files because if files are deleted and Session 2 is restarted but Session 1 is not,
+        #Session 2 will be stuck in an infinite loop trying to find files that it already deleted.
+        #But for live-footage, Session 1 and Session 2 should be restarted together if they need to be.
+        #This code can also be used for "garbage collection".
+        #try:
+        #    minioClient.remove_object('test', image)
+        #    minioClient.remove_object('test', csv)
+        #except ResponseError as err:
+        #    print(err)
         
         count+=1
         
@@ -241,57 +245,7 @@ with tf.Session() as sess2:
                         # print
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 cv2.putText(image_np, gunScore, (int(px[person]), labelBuffer), font, 0.8, (0, 255, 0), 2)
-                        
-                         # Package bounding box info for ES
-                xmin = px[person] 
-                xmax = (px[person] + wid[person])
-                ymin = py[person] 
-                ymax = (py[person] + hei[person])
-                        
-                '''
-                        # Send results to ES
-                        for x in range(5):
-                            tdoc = {
-                                'timestamp': datetime.now(),
-                                'content': 'Test Message',
-                                'text': 'Can you hear me now?',
-                                'number': x,
-                            }
-                            es_post = es.index(index="test", doc_type="_doc", body=tdoc)
-                            print('ES document sent.')
-                            print(tdoc)
-                        '''                    
-                tdoc = {
-                    'timestamp': datetime.now(),
-                    'content': 'Video information',
-                    'text': 'Object detected.',
-                    'xmin': xmin,
-                    'xmax': xmax,
-                    'ymin': ymin,
-                    'ymax': ymax,
-                }
-                    
-                        # Send results to ES
-                res = es.index(index=[ k for k,v in locals().items() if v is url][0].replace("_","-").lower(), doc_type="_doc",body=tdoc)
-                print("ES document sent")
-                #print(tdoc)
-                        
-                if url == RECEPTION_EAST:
-                    res = es.index(index="reception-east", doc_type="_doc", body=tdoc)
-                    print('ES document sent.')
-                #    print(tdoc)
-                elif url == RECEPTION_WEST:
-                    res = es.index(index="reception-west", doc_type="_doc", body=tdoc)
-                    print('ES document sent.')
-                #    print(tdoc)
-                elif url == OUTSIDE_WEST:
-                    res = es.index(index="outside-west", doc_type="_doc", body=tdoc)
-                    print('ES document sent.')
-                #    print(tdoc)
-                elif url == TEST:
-                    es_post = es.index(index="test", doc_type="_doc", body=tdoc)
-                    print('ES document sent.')
-                #    print(tdoc)
+
         print('Took {} seconds to perform image recognition on people found'.format(timeit.default_timer()))
         cv2.imshow('frame', image_np)
         if cv2.waitKey(1000) & 0xFF == ord('q'):
@@ -302,4 +256,4 @@ with tf.Session() as sess2:
         os.remove(image)
         os.remove(csv)
 sess2.close()
-cv2.destroyAllWindows()
+cv2.destroyWindow('frame')
